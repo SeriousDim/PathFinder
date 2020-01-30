@@ -1,3 +1,22 @@
 <resources>
     <string name="app_name">PathFinder</string>
+    <string name="accel">
+        Акселерометр:\nX: %.3f\nY: %.3f\nZ: %.3f
+    </string>
+
+    <string name="gravity">
+        Сила тяжести:\nX: %.3f\nY: %.3f\nZ: %.3f
+    </string>
+
+    <string name="orientation">
+        Ориентация:\nX: %.3f\nY: %.3f\nZ: %.3f
+    </string>
+
+    <string name="geomag">
+        Датчик поворота:\nX: %.3f\nY: %.3f\nZ: %.3f
+    </string>
+
+    <string name="clear">
+        Чистое ускорение:\nX: %.3f\nY: %.3f\nZ: %.3f
+    </string>
 </resources>
