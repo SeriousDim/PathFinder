@@ -8,6 +8,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.widget.Button;
 import android.widget.TextView;
 
 import com.github.mikephil.charting.charts.LineChart;
@@ -28,11 +29,21 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     int count = 0; // variable for using with debugger
 
+    private boolean moveAccel = true,
+                    moveClear = true;
+
+    private float KA = 0.017f; // Kalman filter coefficient
+    private int COLOR_GREEN = 0xff32CD32,
+                COLOR_PINK = 0xffFF69B4,
+                COLOR_CYAN = 0xff40E0D0;
+
     private SensorManager manager;
     private Sensor accel, gravity, orientation, magnetic;
 
     private TextView    sens, errors,
                         accelData, gravityData, orienData, geomagData, clearData;
+
+    private Button accelStop, clearStop;
 
     private LineChart accelX, clearAccel;
 
@@ -42,7 +53,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                     gravity_data = new float[3],
                     linear_data = new float[3],
                     orientation_data = new float[3],
-                    geomag_data = new float[3];
+                    geomag_data = new float[3],
+                    opt_accel_data = new float[3];
 
     private Timer timer;
     private TimerTask task;
@@ -75,6 +87,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         gravityData = findViewById(R.id.gravityData);
         geomagData = findViewById(R.id.geomagData);
 
+        accelStop = findViewById(R.id.accelStop);
+        clearStop = findViewById(R.id.clearStop);
+
+        accelStop.setOnClickListener((e) -> {
+            moveAccel = !moveAccel;
+            accelStop.setText(moveAccel ? "Стоп" : "Двигать");
+        });
+
+        clearStop.setOnClickListener((e) -> {
+            moveClear = !moveClear;
+            clearStop.setText(moveClear ? "Стоп" : "Двигать");
+        });
+
         accelX = findViewById(R.id.accelX);
         clearAccel = findViewById(R.id.clearAccel);
 
@@ -106,7 +131,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        calcClearAcceleration(0.8f);
+                        calcClearAcceleration(0.01f);
 
                         updateCharts();
 
@@ -135,22 +160,25 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     @Override
     public void onSensorChanged(SensorEvent e)
     {
+        float[] v = e.values.clone();
         switch (e.sensor.getType()){
             case Sensor.TYPE_ACCELEROMETER:
-                for (int i=0; i<3; i++)
-                    this.accel_data[i] = e.values[i];
+                for (int i=0; i<3; i++) {
+                    this.accel_data[i] = v[i];
+                    this.opt_accel_data[i] = KA * v[i] + (1 - KA) * opt_accel_data[i];
+                }
                 break;
             case Sensor.TYPE_GRAVITY:
                 for (int i=0; i<3; i++)
-                    this.gravity_data[i] = e.values[i];
+                    this.gravity_data[i] = v[i];
                 break;
             case Sensor.TYPE_ORIENTATION:
                 for (int i=0; i<3; i++)
-                    this.orientation_data[i] = e.values[i];
+                    this.orientation_data[i] = v[i];
                 break;
             case Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR:
                 for (int i=0; i<3; i++)
-                    this.geomag_data[i] = e.values[i];
+                    this.geomag_data[i] = v[i];
                 break;
         }
     }
@@ -236,8 +264,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         // ------ init acceleration chart ------
         accelX.setBorderColor(0x18473Aff);
         accelX.setBorderWidth(3);
-        accelX.setTouchEnabled(true);
         accelX.setDragEnabled(true);
+        accelX.setScaleEnabled(true);
         accelX.getDescription().setEnabled(false);
 
         XAxis x = accelX.getXAxis();
@@ -245,10 +273,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         YAxis y = accelX.getAxisLeft();
         y.enableGridDashedLine(10, 10, 0);
-        y.setAxisMaximum(11f);
-        y.setAxisMinimum(-11f);
+//        y.setAxisMaximum(11f);
+//        y.setAxisMinimum(-11f);
 
-        ArrayList<ILineDataSet> sets = initAccelChart();
+        ArrayList<ILineDataSet> sets = initDataSets(
+                new String[]{"X", "Y", "Z", "kX", "kY", "kZ"},
+                new int[]{Color.RED, Color.BLUE, Color.GREEN, COLOR_PINK, COLOR_CYAN, COLOR_GREEN}
+        );
 
         LineData data = new LineData(sets);
         data.setValueFormatter(new ValueFormatter() {
@@ -259,31 +290,54 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         });
         accelX.setData(data);
 
-        // ------ init claer accel chart ------
+        // ------ init clear acceleration chart ------
+        clearAccel.setBorderColor(0x18473Aff);
+        clearAccel.setBorderWidth(3);
+        clearAccel.setTouchEnabled(true);
+        clearAccel.setDragEnabled(true);
+        clearAccel.getDescription().setEnabled(false);
 
+        x = null;
+        x = clearAccel.getXAxis();
+        x.enableGridDashedLine(10, 10, 0);
+
+        y = null;
+        y = clearAccel.getAxisLeft();
+        y.enableGridDashedLine(10, 10, 0);
+//        y.setAxisMaximum(11f);
+//        y.setAxisMinimum(-11f);
+
+        sets = null;
+        sets = initDataSets(
+                new String[]{"X", "Y", "Z"},
+                new int[]{Color.RED, Color.BLUE, Color.GREEN}
+        );
+
+        data = null;
+        data = new LineData(sets);
+        data.setValueFormatter(new ValueFormatter() {
+            @Override
+            public String getFormattedValue(float value) {
+                return value+"";
+            }
+        });
+        clearAccel.setData(data);
     }
 
 
 
-    private ArrayList<ILineDataSet> initAccelChart(){
+    private ArrayList<ILineDataSet> initDataSets(String[] s, int[] c){
 
         ArrayList<ILineDataSet> set = new ArrayList<>();
 
-        LineDataSet dataX = new LineDataSet(new ArrayList<Entry>(), "X");
-        LineDataSet dataY = new LineDataSet(new ArrayList<Entry>(), "Y");
-        LineDataSet dataZ = new LineDataSet(new ArrayList<Entry>(), "Z");
+        for (int i = 0; i < s.length; i++){
+            LineDataSet dataX = new LineDataSet(new ArrayList<Entry>(), s[i]);
 
-        dataX.setDrawCircles(false);
-        dataY.setDrawCircles(false);
-        dataZ.setDrawCircles(false);
+            dataX.setDrawCircles(false);
+            dataX.setColor(c[i]);
 
-        dataX.setColor(Color.RED);
-        dataY.setColor(Color.BLUE);
-        dataZ.setColor(Color.GREEN);
-
-        set.add(dataX);
-        set.add(dataY);
-        set.add(dataZ);
+            set.add(dataX);
+        }
 
         return set;
     }
@@ -292,14 +346,60 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private void updateCharts()
     {
-        float xd = accel_data[0];
-        float yd = accel_data[1];
-        float zd = accel_data[2];
+        float xd, yd, zd;
+
+        // ------ update acceleration chart ------
+        float buf[] = accel_data.clone();
 
         LineData data = accelX.getLineData();
         ArrayList<Entry> setX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(0))).getValues();
         ArrayList<Entry> setY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(1))).getValues();
         ArrayList<Entry> setZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(2))).getValues();
+        ArrayList<Entry> setkX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(3))).getValues();
+        ArrayList<Entry> setkY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(4))).getValues();
+        ArrayList<Entry> setkZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(5))).getValues();
+
+        xd = buf[0];
+        yd = buf[1];
+        zd = buf[2];
+
+        setX.add(new Entry((setX.size()-1)/10f, xd));
+        setY.add(new Entry((setY.size()-1)/10f, yd));
+        setZ.add(new Entry((setZ.size()-1)/10f, zd));
+
+        buf = opt_accel_data.clone();
+        xd = buf[0];
+        yd = buf[1];
+        zd = buf[2];
+
+        setkX.add(new Entry((setX.size()-1)/10f, xd));
+        setkY.add(new Entry((setY.size()-1)/10f, yd));
+        setkZ.add(new Entry((setZ.size()-1)/10f, zd));
+
+        ((LineDataSet) (data.getDataSetByIndex(0))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(1))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(2))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(3))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(4))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(5))).notifyDataSetChanged();
+
+        accelX.getData().notifyDataChanged();
+        accelX.notifyDataSetChanged();
+        if (moveAccel)
+            accelX.moveViewToX((float)(setX.size()-1));
+
+        // ------ update clear acceleration chart ------
+        buf = linear_data.clone();
+        xd = buf[0];
+        yd = buf[1];
+        zd = buf[2];
+
+        data = null;
+        setX = setY = setZ = null;
+        data = clearAccel.getLineData();
+        setX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(0))).getValues();
+        setY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(1))).getValues();
+        setZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(2))).getValues();
 
         setX.add(new Entry((setX.size()-1)/10f, xd));
         setY.add(new Entry((setY.size()-1)/10f, yd));
@@ -309,9 +409,11 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         ((LineDataSet) (data.getDataSetByIndex(1))).notifyDataSetChanged();
         ((LineDataSet) (data.getDataSetByIndex(2))).notifyDataSetChanged();
 
-        accelX.getData().notifyDataChanged();
-        accelX.notifyDataSetChanged();
-        accelX.moveViewToX((float)(setX.size()-1));
+        clearAccel.getData().notifyDataChanged();
+        clearAccel.notifyDataSetChanged();
+        if (moveClear)
+            clearAccel.moveViewToX((float)(setX.size()-1));
+
     }
 
 

@@ -54,6 +54,14 @@
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/errors" />
 
+            <Button
+                android:id="@+id/accelStop"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Стоп"
+                app:layout_constraintBottom_toBottomOf="@+id/accelData"
+                app:layout_constraintEnd_toEndOf="parent" />
+
             <LinearLayout
                 android:id="@+id/accelGraphs"
                 android:layout_width="match_parent"
@@ -79,6 +87,14 @@
                 android:text="TextView"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@+id/accelGraphs" />
+
+            <Button
+                android:id="@+id/clearStop"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Стоп"
+                app:layout_constraintBottom_toBottomOf="@+id/clearData"
+                app:layout_constraintEnd_toEndOf="parent" />
 
             <LinearLayout
                 android:id="@+id/clearGraphs"
