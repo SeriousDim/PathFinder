@@ -8,8 +8,12 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.github.mikephil.charting.charts.LineChart;
 import com.github.mikephil.charting.components.XAxis;
@@ -31,8 +35,14 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private boolean moveAccel = true,
                     moveClear = true;
+    private boolean started = false;
 
-    private float KA = 0.017f; // Kalman filter coefficient
+    private float KA = 0.03f; // Kalman filter coefficient for accelerometer
+    private float KG = 0.015f;
+    private float KC = 0.05f; // Kalman coefficient for filtering clear acceleration
+
+    private int time = 100; // interval in ms
+
     private int COLOR_GREEN = 0xff32CD32,
                 COLOR_PINK = 0xffFF69B4,
                 COLOR_CYAN = 0xff40E0D0;
@@ -41,20 +51,24 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
     private Sensor accel, gravity, orientation, magnetic;
 
     private TextView    sens, errors,
-                        accelData, gravityData, orienData, geomagData, clearData;
+                        accelData, gravityData, orienData, geomagData, clearData, velData;
 
     private Button accelStop, clearStop;
 
+    private EditText value;
+
     private LineChart accelX, clearAccel;
 
-    private String debug_info[] = new String[5];
+    private String debug_info[] = new String[6];
 
     public float[]  accel_data = new float[3],
                     gravity_data = new float[3],
                     linear_data = new float[3],
+                    opt_linear_data = new float[3],
                     orientation_data = new float[3],
                     geomag_data = new float[3],
-                    opt_accel_data = new float[3];
+                    opt_accel_data = new float[3],
+                    velocity = new float[3];
 
     private Timer timer;
     private TimerTask task;
@@ -86,6 +100,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         orienData = findViewById(R.id.orientationData);
         gravityData = findViewById(R.id.gravityData);
         geomagData = findViewById(R.id.geomagData);
+        velData = findViewById(R.id.velData);
 
         accelStop = findViewById(R.id.accelStop);
         clearStop = findViewById(R.id.clearStop);
@@ -103,12 +118,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         accelX = findViewById(R.id.accelX);
         clearAccel = findViewById(R.id.clearAccel);
 
+        value = findViewById(R.id.kvalue);
+        listenEditText(this);
+
         // ------ getting string resources ------
         debug_info[0] = getResources().getString(R.string.accel);
         debug_info[1] = getResources().getString(R.string.clear);
         debug_info[2] = getResources().getString(R.string.gravity);
         debug_info[3] = getResources().getString(R.string.orientation);
         debug_info[4] = getResources().getString(R.string.geomag);
+        debug_info[5] = getResources().getString(R.string.velocity);
 
         // ------ settings ------
         showSensorList();
@@ -140,7 +159,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 });
             }
         };
-        timer.schedule(task, 0, 100);
+        timer.schedule(task, 0, time);
         count++;
     }
 
@@ -165,12 +184,20 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             case Sensor.TYPE_ACCELEROMETER:
                 for (int i=0; i<3; i++) {
                     this.accel_data[i] = v[i];
-                    this.opt_accel_data[i] = KA * v[i] + (1 - KA) * opt_accel_data[i];
+                    if (!started) {
+                        this.opt_accel_data[i] = v[i];
+                    } else
+                        this.opt_accel_data[i] = KA * v[i] + (1 - KA) * opt_accel_data[i];
                 }
                 break;
             case Sensor.TYPE_GRAVITY:
-                for (int i=0; i<3; i++)
+                for (int i=0; i<3; i++){
                     this.gravity_data[i] = v[i];
+                    /*if (!started)
+                        this.gravity_data[i] = v[i];
+                    else
+                        this.gravity_data[i] = KG * v[i] + (1 - KG) * gravity_data[i];*/
+                }
                 break;
             case Sensor.TYPE_ORIENTATION:
                 for (int i=0; i<3; i++)
@@ -181,6 +208,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                     this.geomag_data[i] = v[i];
                 break;
         }
+        if (!started) started = true;
     }
 
 
@@ -200,7 +228,44 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             float bufG[] = gravity_data.clone();
             float g = alpha * bufG[i] + (1 - alpha) * bufA[i];
             linear_data[i] = bufA[i] - g;
+            if (!started) {
+                this.opt_linear_data[i] = linear_data[i];
+            } else
+                this.opt_linear_data[i] = KC * linear_data[i] + (1 - KC) * opt_linear_data[i];
         }
+        calcVelocity();
+    }
+
+
+
+    private void calcVelocity(){
+        for (int i=0; i<3; i++) {
+            velocity[i] = velocity[i] + opt_linear_data[i] * ((float)(time) / 1000f);
+        }
+        setSensorData(velData, velocity, 5);
+    }
+
+
+
+    private void listenEditText(MainActivity a){
+        value.setText(KC+"");
+        value.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                KC = Float.parseFloat(s.toString());
+                Toast.makeText(a, "KC = "+KC, Toast.LENGTH_LONG).show();
+            }
+        });
     }
 
 
@@ -278,7 +343,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         ArrayList<ILineDataSet> sets = initDataSets(
                 new String[]{"X", "Y", "Z", "kX", "kY", "kZ"},
-                new int[]{Color.RED, Color.BLUE, Color.GREEN, COLOR_PINK, COLOR_CYAN, COLOR_GREEN}
+                new int[]{COLOR_PINK, COLOR_CYAN, Color.GREEN, Color.RED, Color.BLUE, COLOR_GREEN}
         );
 
         LineData data = new LineData(sets);
@@ -309,8 +374,8 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         sets = null;
         sets = initDataSets(
-                new String[]{"X", "Y", "Z"},
-                new int[]{Color.RED, Color.BLUE, Color.GREEN}
+                new String[]{"X", "Y", "Z", "cX", "cY", "cZ"},
+                new int[]{COLOR_PINK, COLOR_CYAN, Color.GREEN, Color.RED, Color.BLUE, COLOR_GREEN}
         );
 
         data = null;
@@ -394,20 +459,33 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         yd = buf[1];
         zd = buf[2];
 
-        data = null;
-        setX = setY = setZ = null;
         data = clearAccel.getLineData();
         setX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(0))).getValues();
         setY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(1))).getValues();
         setZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(2))).getValues();
+        setkX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(3))).getValues();
+        setkY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(4))).getValues();
+        setkZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(5))).getValues();
 
         setX.add(new Entry((setX.size()-1)/10f, xd));
         setY.add(new Entry((setY.size()-1)/10f, yd));
         setZ.add(new Entry((setZ.size()-1)/10f, zd));
 
+        buf = opt_linear_data.clone();
+        xd = buf[0];
+        yd = buf[1];
+        zd = buf[2];
+
+        setkX.add(new Entry((setX.size()-1)/10f, xd));
+        setkY.add(new Entry((setY.size()-1)/10f, yd));
+        setkZ.add(new Entry((setZ.size()-1)/10f, zd));
+
         ((LineDataSet) (data.getDataSetByIndex(0))).notifyDataSetChanged();
         ((LineDataSet) (data.getDataSetByIndex(1))).notifyDataSetChanged();
         ((LineDataSet) (data.getDataSetByIndex(2))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(3))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(4))).notifyDataSetChanged();
+        ((LineDataSet) (data.getDataSetByIndex(5))).notifyDataSetChanged();
 
         clearAccel.getData().notifyDataChanged();
         clearAccel.notifyDataSetChanged();

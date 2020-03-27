@@ -76,6 +76,15 @@
                     android:layout_width="match_parent"
                     android:layout_height="350dp" />
 
+                <EditText
+                    android:id="@+id/kvalue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ems="10"
+                    android:imeOptions="actionDone"
+                    android:inputType="textPersonName"
+                    android:text="Name" />
+
             </LinearLayout>
 
             <TextView
@@ -86,6 +95,16 @@
                 android:layout_marginTop="8dp"
                 android:text="TextView"
                 app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@+id/accelGraphs" />
+
+            <TextView
+                android:id="@+id/velData"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_marginTop="8dp"
+                android:text="TextView"
+                app:layout_constraintStart_toEndOf="@+id/clearData"
                 app:layout_constraintTop_toBottomOf="@+id/accelGraphs" />
 
             <Button
