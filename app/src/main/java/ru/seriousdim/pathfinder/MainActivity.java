@@ -10,6 +10,7 @@ import android.hardware.SensorManager;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -24,6 +25,7 @@ import com.github.mikephil.charting.data.LineDataSet;
 import com.github.mikephil.charting.formatter.ValueFormatter;
 import com.github.mikephil.charting.interfaces.datasets.ILineDataSet;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Timer;
@@ -33,46 +35,68 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     int count = 0; // variable for using with debugger
 
+    /** Boolean variables */
     private boolean moveAccel = true,
                     moveClear = true;
     private boolean started = false;
 
-    private float KA = 0.03f; // Kalman filter coefficient for accelerometer
-    private float KG = 0.015f;
-    private float KC = 0.05f; // Kalman coefficient for filtering clear acceleration
+    /** BigDecimal constants */
+    private BigDecimal ONE = BigDecimal.ONE;
+    private BigDecimal THOUSAND = new BigDecimal("1000");
+    private BigDecimal KA = new BigDecimal("0.03"); // Kalman filter coefficient for accelerometer
+    private BigDecimal KG = new BigDecimal("0.015");
+    private BigDecimal KC = new BigDecimal("0.015"); // Kalman coefficient for filtering clear acceleration
+    private BigDecimal VELOCITY_THRESHOLD = new BigDecimal("0.001");
+    private BigDecimal GRAVITY_EARTH = new BigDecimal("9.80665");
 
-    private int time = 100; // interval in ms
+    /** Time calculation for velocity */
+    private long lastTime;
+    private long time; // interval (difference) in ms (System.currentTimeMillis())
 
+    /** Color constants */
     private int COLOR_GREEN = 0xff32CD32,
                 COLOR_PINK = 0xffFF69B4,
                 COLOR_CYAN = 0xff40E0D0;
 
+    /** Sensors */
     private SensorManager manager;
     private Sensor accel, gravity, orientation, magnetic;
 
+    /** GUI variables */
     private TextView    sens, errors,
-                        accelData, gravityData, orienData, geomagData, clearData, velData;
+                        accelData, gravityData, orienData, geomagData, clearData, velData, calibData, accelActual;
 
-    private Button accelStop, clearStop;
+    private Button accelStop, clearStop, calibrateButton;
 
     private EditText value;
 
+    /** Chart views */
     private LineChart accelX, clearAccel;
 
-    private String debug_info[] = new String[6];
+    /** Debug template strings */
+    private String debug_info[] = new String[7];
 
-    public float[]  accel_data = new float[3],
-                    gravity_data = new float[3],
-                    linear_data = new float[3],
-                    opt_linear_data = new float[3],
-                    orientation_data = new float[3],
-                    geomag_data = new float[3],
-                    opt_accel_data = new float[3],
-                    velocity = new float[3];
+    /** Sensor data */
+    public BigDecimal[] accel_data = new BigDecimal[3],
+                        gravity_data = new BigDecimal[3],
+                        linear_data = new BigDecimal[3],
+                        opt_accel_data = new BigDecimal[3],
+                        velocity = new BigDecimal[3],
+                        opt_linear_data = new BigDecimal[3],
+                        calib_data = new BigDecimal[3],
+                        actual_accel = new BigDecimal[3];
 
+    public float[]  orientation_data = new float[3],
+                    geomag_data = new float[3];
+
+
+    /** Other variables */
     private Timer timer;
     private TimerTask task;
     private List<Sensor> sensors;
+
+    /** Interval to get new values */
+    private int updateTime = 100; // in milliseconds
 
     @Override
     protected void onCreate(Bundle savedInstanceState)
@@ -82,7 +106,19 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         setTitle("Отладка датчиков");
 
-        // ------ getting sensor manager and sensors ------
+        /** init some BigDecimal arrays and values */
+        for (int i=0; i<3; i++) {
+            accel_data[i] = BigDecimal.ZERO;
+            gravity_data[i] = BigDecimal.ZERO;
+            linear_data[i] = BigDecimal.ZERO;
+            opt_linear_data[i] = BigDecimal.ZERO;
+            opt_accel_data[i] = BigDecimal.ZERO;
+            velocity[i] = BigDecimal.ZERO;
+        }
+
+        lastTime = System.currentTimeMillis();
+
+        /** getting sensor manager and sensors */
         manager = (SensorManager) getSystemService(SENSOR_SERVICE);
 
         accel = manager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -92,7 +128,7 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
         sensors = manager.getSensorList(Sensor.TYPE_ALL);
 
-        // ------ getting views ------
+        /** getting views and setting click listeners */
         sens = findViewById(R.id.sensors);
         errors = findViewById(R.id.errors);
         accelData = findViewById(R.id.accelData);
@@ -101,9 +137,12 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         gravityData = findViewById(R.id.gravityData);
         geomagData = findViewById(R.id.geomagData);
         velData = findViewById(R.id.velData);
+        calibData = findViewById(R.id.calibData);
+        accelActual = findViewById(R.id.accelActual);
 
         accelStop = findViewById(R.id.accelStop);
         clearStop = findViewById(R.id.clearStop);
+        calibrateButton = findViewById(R.id.calibrate);
 
         accelStop.setOnClickListener((e) -> {
             moveAccel = !moveAccel;
@@ -115,23 +154,29 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
             clearStop.setText(moveClear ? "Стоп" : "Двигать");
         });
 
+        calibrateButton.setOnClickListener((e) -> {
+            startCalibrate();
+        });
+
         accelX = findViewById(R.id.accelX);
         clearAccel = findViewById(R.id.clearAccel);
 
         value = findViewById(R.id.kvalue);
         listenEditText(this);
 
-        // ------ getting string resources ------
+        /** getting string resources **/
         debug_info[0] = getResources().getString(R.string.accel);
         debug_info[1] = getResources().getString(R.string.clear);
         debug_info[2] = getResources().getString(R.string.gravity);
         debug_info[3] = getResources().getString(R.string.orientation);
         debug_info[4] = getResources().getString(R.string.geomag);
         debug_info[5] = getResources().getString(R.string.velocity);
+        debug_info[6] = getResources().getString(R.string.calibration);
+        debug_info[7] = getResources().getString(R.string.accelActual);
 
-        // ------ settings ------
+        /** settings */
         showSensorList();
-        registerListeners();
+        registerListeners(SensorManager.SENSOR_DELAY_NORMAL);
 
         initCharts();
     }
@@ -150,16 +195,20 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
+                        long tn = System.currentTimeMillis();
+                        time = tn - lastTime;
+                        lastTime = tn;
+
+                        setActualAccelData();
                         calcClearAcceleration(0.01f);
 
                         updateCharts();
-
                         showValues();
                     }
                 });
             }
         };
-        timer.schedule(task, 0, time);
+        timer.schedule(task, 0, updateTime);
         count++;
     }
 
@@ -183,16 +232,18 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         switch (e.sensor.getType()){
             case Sensor.TYPE_ACCELEROMETER:
                 for (int i=0; i<3; i++) {
-                    this.accel_data[i] = v[i];
+                    this.accel_data[i] = new BigDecimal(Float.toString(v[i])).setScale(3, BigDecimal.ROUND_HALF_UP);
                     if (!started) {
-                        this.opt_accel_data[i] = v[i];
+                        this.opt_accel_data[i] = this.accel_data[i];
                     } else
-                        this.opt_accel_data[i] = KA * v[i] + (1 - KA) * opt_accel_data[i];
+                        this.opt_accel_data[i] = this.accel_data[i].multiply(KA).add(
+                                                    opt_accel_data[i].multiply(
+                                                        ONE.subtract(KA)));
                 }
                 break;
             case Sensor.TYPE_GRAVITY:
                 for (int i=0; i<3; i++){
-                    this.gravity_data[i] = v[i];
+                    this.gravity_data[i] = new BigDecimal(Float.toString(v[i])).setScale(3, BigDecimal.ROUND_HALF_UP);
                     /*if (!started)
                         this.gravity_data[i] = v[i];
                     else
@@ -221,17 +272,47 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
 
 
-    private void calcClearAcceleration(float alpha)
+    private void startCalibrate(){
+        BigDecimal[] ac = accel_data.clone();
+        calib_data[0] = ac[0].negate();
+        calib_data[1] = ac[1].negate();
+        calib_data[2] = GRAVITY_EARTH.subtract(ac[2]);
+        Toast.makeText(this, "Откалибровано", Toast.LENGTH_SHORT).show();
+    }
+
+
+
+    private void setActualAccelData(){
+        BigDecimal[] ac = accel_data.clone();
+        BigDecimal[] cal = calib_data.clone();
+        for (int i=0; i<3; i++)
+            actual_accel[i] = ac[i].add(cal[i]);
+    }
+
+
+
+    private void calcClearAcceleration(float a)
     {
+        BigDecimal alpha = new BigDecimal(Float.toString(a));
+        BigDecimal bufA[] = accel_data.clone();
+        BigDecimal bufG[] = gravity_data.clone();
         for (int i=0; i<3; i++){
-            float bufA[] = accel_data.clone();
-            float bufG[] = gravity_data.clone();
-            float g = alpha * bufG[i] + (1 - alpha) * bufA[i];
-            linear_data[i] = bufA[i] - g;
+            BigDecimal g = bufG[i].multiply(alpha)
+                                .add(
+                                    bufA[i].multiply(
+                                        ONE.subtract(alpha)
+                                    )
+                                );
+            linear_data[i] = bufA[i].subtract(g);
             if (!started) {
                 this.opt_linear_data[i] = linear_data[i];
             } else
-                this.opt_linear_data[i] = KC * linear_data[i] + (1 - KC) * opt_linear_data[i];
+                this.opt_linear_data[i] = linear_data[i].multiply(KC) // KC * linear_data[i] + (1 - KC) * opt_linear_data[i]
+                                            .add(
+                                                    opt_linear_data[i].multiply(
+                                                            ONE.subtract(KC)
+                                                    )
+                                            );
         }
         calcVelocity();
     }
@@ -240,7 +321,13 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private void calcVelocity(){
         for (int i=0; i<3; i++) {
-            velocity[i] = velocity[i] + opt_linear_data[i] * ((float)(time) / 1000f);
+            //if (velocity[i].abs().compareTo(VELOCITY_THRESHOLD) == 1){
+                velocity[i] = velocity[i].add( //velocity[i] + (opt_)linear_data[i] * ((float)(time) / 1000f)
+                        opt_linear_data[i].multiply(
+                                getTimeInSec()
+                        )
+                );
+            //}
         }
         setSensorData(velData, velocity, 5);
     }
@@ -262,33 +349,33 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
             @Override
             public void afterTextChanged(Editable s) {
-                KC = Float.parseFloat(s.toString());
-                Toast.makeText(a, "KC = "+KC, Toast.LENGTH_LONG).show();
+                KC = new BigDecimal(s.toString());
+                Toast.makeText(a, "KC = "+KC.floatValue(), Toast.LENGTH_LONG).show();
             }
         });
     }
 
 
 
-    private void registerListeners()
+    private void registerListeners(int delay)
     {
         if (accel != null)
-            manager.registerListener(this, accel, SensorManager.SENSOR_DELAY_NORMAL);
+            manager.registerListener(this, accel, delay);
         else
             errors.append("No accelerometer found.\n");
 
         if (gravity != null)
-            manager.registerListener(this, gravity, SensorManager.SENSOR_DELAY_NORMAL);
+            manager.registerListener(this, gravity, delay);
         else
             errors.append("No gravity sensor found.\n");
 
         if (orientation != null)
-            manager.registerListener(this, orientation, SensorManager.SENSOR_DELAY_NORMAL);
+            manager.registerListener(this, orientation, delay);
         else
             errors.append("No orientation sensor found.\n");
 
         if (magnetic != null)
-            manager.registerListener(this, magnetic, SensorManager.SENSOR_DELAY_NORMAL);
+            manager.registerListener(this, magnetic, delay);
         else
             errors.append("No geomagnetic rotation sensor found.\n");
     }
@@ -314,6 +401,16 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
 
 
+    private void setSensorData(TextView t, BigDecimal[] f, int ind)
+    {
+        BigDecimal buf[] = f.clone();
+        t.setText(String.format(
+                debug_info[ind], buf[0].toPlainString(), buf[1].toPlainString(), buf[2].toPlainString()
+        ));
+    }
+
+
+
     private void showValues()
     {
         setSensorData(accelData, accel_data, 0);
@@ -321,6 +418,15 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         setSensorData(gravityData, gravity_data, 2);
         setSensorData(orienData, orientation_data, 3);
         setSensorData(geomagData, geomag_data, 4);
+        setSensorData(calibData, calib_data, 6);
+        setSensorData(accelActual, actual_accel, 7);
+    }
+
+
+
+    private BigDecimal getTimeInSec(){
+        float val = ((float)(time))/1000f;
+        return new BigDecimal(Float.toString(val));
     }
 
 
@@ -411,10 +517,10 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
 
     private void updateCharts()
     {
-        float xd, yd, zd;
+        BigDecimal xd, yd, zd;
 
         // ------ update acceleration chart ------
-        float buf[] = accel_data.clone();
+        BigDecimal buf[] = accel_data.clone();
 
         LineData data = accelX.getLineData();
         ArrayList<Entry> setX = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(0))).getValues();
@@ -428,18 +534,28 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         yd = buf[1];
         zd = buf[2];
 
-        setX.add(new Entry((setX.size()-1)/10f, xd));
-        setY.add(new Entry((setY.size()-1)/10f, yd));
-        setZ.add(new Entry((setZ.size()-1)/10f, zd));
+        setX.add(new Entry((setX.size()-1)/10f, xd.floatValue()));
+        setY.add(new Entry((setY.size()-1)/10f, yd.floatValue()));
+        setZ.add(new Entry((setZ.size()-1)/10f, zd.floatValue()));
 
         buf = opt_accel_data.clone();
         xd = buf[0];
         yd = buf[1];
         zd = buf[2];
 
-        setkX.add(new Entry((setX.size()-1)/10f, xd));
-        setkY.add(new Entry((setY.size()-1)/10f, yd));
-        setkZ.add(new Entry((setZ.size()-1)/10f, zd));
+        setkX.add(new Entry((setX.size()-1)/10f, xd.floatValue()));
+        setkY.add(new Entry((setY.size()-1)/10f, yd.floatValue()));
+        setkZ.add(new Entry((setZ.size()-1)/10f, zd.floatValue()));
+
+        /*if (setX.size() > 500){
+            setX.remove(0);
+            setY.remove(0);
+            setZ.remove(0);
+
+            setkX.remove(0);
+            setkY.remove(0);
+            setkZ.remove(0);
+        }*/
 
         ((LineDataSet) (data.getDataSetByIndex(0))).notifyDataSetChanged();
         ((LineDataSet) (data.getDataSetByIndex(1))).notifyDataSetChanged();
@@ -467,18 +583,30 @@ public class MainActivity extends AppCompatActivity implements SensorEventListen
         setkY = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(4))).getValues();
         setkZ = (ArrayList<Entry>) ((LineDataSet) (data.getDataSetByIndex(5))).getValues();
 
-        setX.add(new Entry((setX.size()-1)/10f, xd));
-        setY.add(new Entry((setY.size()-1)/10f, yd));
-        setZ.add(new Entry((setZ.size()-1)/10f, zd));
+        setX.add(new Entry((setX.size()-1)/10f, xd.floatValue()));
+        setY.add(new Entry((setY.size()-1)/10f, yd.floatValue()));
+        setZ.add(new Entry((setZ.size()-1)/10f, zd.floatValue()));
 
         buf = opt_linear_data.clone();
         xd = buf[0];
         yd = buf[1];
         zd = buf[2];
 
-        setkX.add(new Entry((setX.size()-1)/10f, xd));
-        setkY.add(new Entry((setY.size()-1)/10f, yd));
-        setkZ.add(new Entry((setZ.size()-1)/10f, zd));
+        setkX.add(new Entry((setX.size()-1)/10f, xd.floatValue()));
+        setkY.add(new Entry((setY.size()-1)/10f, yd.floatValue()));
+        setkZ.add(new Entry((setZ.size()-1)/10f, zd.floatValue()));
+
+        /*if (setX.size() > 500){
+            setX.remove(0);
+            setY.remove(0);
+            setZ.remove(0);
+
+            setkX.remove(0);
+            setkY.remove(0);
+            setkZ.remove(0);
+        }*/
+
+        Log.i("stag", setX.size()+"");
 
         ((LineDataSet) (data.getDataSetByIndex(0))).notifyDataSetChanged();
         ((LineDataSet) (data.getDataSetByIndex(1))).notifyDataSetChanged();

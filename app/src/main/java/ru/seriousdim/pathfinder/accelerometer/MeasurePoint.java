@@ -5,8 +5,8 @@ public class MeasurePoint {
     private float x, y, z;
     private float speedBefore, speedAfter;
     private float distance;
-    private float acceleration;
-    private long interval;
+    private float acceleration; // meters per second^2
+    private long interval; // milliseconds
 
     public MeasurePoint(float x, float y, float z, float speedBefore, long interval) {
         this.x = x;
@@ -20,7 +20,7 @@ public class MeasurePoint {
 
     private void calc(){
         this.acceleration = (float)Math.sqrt(this.x*this.x + this.y*this.y* + this.z*this.z);
-        float t = ((float)interval/1000f);
+        float t = ((float)interval/1000f); // to seconds
         speedAfter = speedBefore + this.acceleration * t;
         distance = speedBefore * t + acceleration * t * t * 0.5f;
     }
